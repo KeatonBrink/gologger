@@ -32,12 +32,27 @@ func InitGoLogger(isPrinting bool, outputFileName string) (GoLogger, error) {
 
 	goLogger.openFileConnection = f
 
-	goLogger.LogMessage("Starting GoLogger")
+	goLogger.QueueMessage("Starting GoLogger")
+
+	go messageHandler(goLogger)
 
 	return goLogger, nil
 }
 
-func (gLog *GoLogger) LogMessage(text string) error {
+func messageHandler(gLog GoLogger) {
+	var message string
+	for {
+		message = <-gLog.inputChannel
+		gLog.logMessage(message)
+	}
+}
+
+func (gLog *GoLogger) QueueMessage(text string) error {
+	gLog.inputChannel <- text
+	return nil
+}
+
+func (gLog *GoLogger) logMessage(text string) error {
 	now := time.Now().Format("2006-01-02 15:04:05")
 
 	logText := fmt.Sprintf("%v - %v\n", now, text)
