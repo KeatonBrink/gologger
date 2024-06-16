@@ -12,17 +12,26 @@ type GoLogger struct {
 	messageLogLen      int
 	outputFileName     string
 	inputChannel       chan string
+	inputChannelSize   int
 	openFileConnection *os.File
+	endChannel         chan struct{}
+	curMessage         string
 }
 
-func InitGoLogger(isPrinting bool, outputFileName string) (GoLogger, error) {
-	goLogger := GoLogger{
+var goLogger GoLogger
+
+func InitGoLogger(isPrinting bool, outputFileName string) error {
+	inputChannelSize := 100
+	goLogger = GoLogger{
 		isPrinting:         isPrinting,
 		messageLog:         make([]string, 0),
 		messageLogLen:      0,
 		outputFileName:     outputFileName,
-		inputChannel:       make(chan string),
+		inputChannel:       make(chan string, inputChannelSize),
+		inputChannelSize:   inputChannelSize,
 		openFileConnection: nil,
+		endChannel:         make(chan struct{}, 1),
+		curMessage:         "",
 	}
 	// Todo: Open the  output file to write to
 	f, err := os.OpenFile(goLogger.outputFileName, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
@@ -32,38 +41,63 @@ func InitGoLogger(isPrinting bool, outputFileName string) (GoLogger, error) {
 
 	goLogger.openFileConnection = f
 
-	goLogger.QueueMessage("Starting GoLogger")
+	QueueMessage("Starting GoLogger")
 
-	go messageHandler(goLogger)
+	go messageHandler()
 
-	return goLogger, nil
-}
-
-func messageHandler(gLog GoLogger) {
-	var message string
-	for {
-		message = <-gLog.inputChannel
-		gLog.logMessage(message)
-	}
-}
-
-func (gLog *GoLogger) QueueMessage(text string) error {
-	gLog.inputChannel <- text
 	return nil
 }
 
-func (gLog *GoLogger) logMessage(text string) error {
+func messageHandler() {
+	var messageSize int
+	for {
+		goLogger.curMessage = <-goLogger.inputChannel
+		goLogger.curMessage = formatMessage(goLogger.curMessage)
+		// fmt.Println("Length of inputchannel: ", len(goLogger.inputChannel))
+		messageSize = 1
+		for ; len(goLogger.inputChannel) > 0 && messageSize < goLogger.inputChannelSize; messageSize++ {
+			goLogger.curMessage += formatMessage(<-goLogger.inputChannel)
+		}
+		goLogger.logMessage(goLogger.curMessage)
+		if len(goLogger.inputChannel) == 0 && len(goLogger.endChannel) > 0 {
+			// fmt.Println("Ending GoLogger")
+			<-goLogger.endChannel
+			break
+		}
+		goLogger.curMessage = ""
+	}
+}
+
+func formatMessage(text string) string {
 	now := time.Now().Format("2006-01-02 15:04:05")
 
-	logText := fmt.Sprintf("%v - %v\n", now, text)
+	return fmt.Sprintf("%v - %v\n", now, text)
+}
+
+func QueueMessage(text string) error {
+	goLogger.inputChannel <- text
+	return nil
+}
+
+func (gLog *GoLogger) logMessage(logText string) error {
 
 	if gLog.isPrinting {
 		fmt.Print(logText)
 	}
 
 	if _, err := gLog.openFileConnection.WriteString(logText); err != nil {
-		return err
+		panic(err)
 	}
 
+	return nil
+}
+
+func EmptyMessageQueue() error {
+	if len(goLogger.inputChannel) > 0 || len(goLogger.curMessage) > 0 {
+		// fmt.Println("Length of inputChannel: ", len(goLogger.inputChannel))
+		// fmt.Println("Length of curMessage: ", len(goLogger.curMessage))
+		goLogger.endChannel <- struct{}{}
+		goLogger.endChannel <- struct{}{}
+	}
 	return nil
 }
