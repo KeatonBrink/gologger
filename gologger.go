@@ -33,13 +33,15 @@ func InitGoLogger(isPrinting bool, outputFileName string) error {
 		endChannel:         make(chan struct{}, 1),
 		curMessage:         "",
 	}
-	// Todo: Open the  output file to write to
-	f, err := os.OpenFile(goLogger.outputFileName, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
-	if err != nil {
-		panic(err)
-	}
 
-	goLogger.openFileConnection = f
+	if len(goLogger.outputFileName) > 0 {
+		f, err := os.OpenFile(goLogger.outputFileName, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+		if err != nil {
+			panic(err)
+		}
+
+		goLogger.openFileConnection = f
+	}
 
 	QueueMessage("Starting GoLogger")
 
@@ -85,8 +87,10 @@ func (gLog *GoLogger) logMessage(logText string) error {
 		fmt.Print(logText)
 	}
 
-	if _, err := gLog.openFileConnection.WriteString(logText); err != nil {
-		panic(err)
+	if gLog.openFileConnection != nil {
+		if _, err := gLog.openFileConnection.WriteString(logText); err != nil {
+			panic(err)
+		}
 	}
 
 	return nil
