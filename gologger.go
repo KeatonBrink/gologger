@@ -2,7 +2,9 @@ package gologger
 
 import (
 	"fmt"
+	"log"
 	"os"
+	"os/exec"
 	"time"
 )
 
@@ -16,6 +18,7 @@ type GoLogger struct {
 	openFileConnection *os.File
 	endChannel         chan struct{}
 	curMessage         string
+	pauseChannel       chan struct{}
 }
 
 var goLogger GoLogger
@@ -32,6 +35,7 @@ func InitGoLogger(isPrinting bool, outputFileName string) error {
 		openFileConnection: nil,
 		endChannel:         make(chan struct{}, 1),
 		curMessage:         "",
+		pauseChannel:       make(chan struct{}),
 	}
 
 	if len(goLogger.outputFileName) > 0 {
@@ -41,6 +45,10 @@ func InitGoLogger(isPrinting bool, outputFileName string) error {
 		}
 
 		goLogger.openFileConnection = f
+	}
+
+	if goLogger.isPrinting {
+		go printHandler()
 	}
 
 	QueueMessage("Starting GoLogger")
@@ -70,15 +78,36 @@ func messageHandler() {
 	}
 }
 
+func printHandler() {
+	// disable input buffering
+	exec.Command("stty", "-F", "/dev/tty", "cbreak", "min", "1").Run()
+	// do not display entered characters on the screen
+	exec.Command("stty", "-F", "/dev/tty", "-echo").Run()
+	var b []byte = make([]byte, 1)
+	for {
+		os.Stdin.Read(b)
+		if b[0] == 'p' {
+			fmt.Println("Pausing")
+			goLogger.isPrinting = false
+			enableInput()
+			goLogger.pauseChannel <- struct{}{}
+			// Break would also work here, but this is more clear
+			return
+		}
+	}
+}
+
+func enableInput() {
+	err := exec.Command("stty", "-F", "/dev/tty", "sane").Run()
+	if err != nil {
+		log.Fatalf("Failed to reset terminal settings: %v", err)
+	}
+}
+
 func formatMessage(text string) string {
 	now := time.Now().Format("2006-01-02 15:04:05")
 
 	return fmt.Sprintf("%v - %v\n", now, text)
-}
-
-func QueueMessage(text string) error {
-	goLogger.inputChannel <- text
-	return nil
 }
 
 func (gLog *GoLogger) logMessage(logText string) error {
@@ -96,6 +125,13 @@ func (gLog *GoLogger) logMessage(logText string) error {
 	return nil
 }
 
+func EnablePrintHandler() {
+	if !goLogger.isPrinting {
+		goLogger.isPrinting = true
+		go printHandler()
+	}
+}
+
 func EmptyMessageQueue() error {
 	if len(goLogger.inputChannel) > 0 || len(goLogger.curMessage) > 0 {
 		// fmt.Println("Length of inputChannel: ", len(goLogger.inputChannel))
@@ -103,5 +139,15 @@ func EmptyMessageQueue() error {
 		goLogger.endChannel <- struct{}{}
 		goLogger.endChannel <- struct{}{}
 	}
+	enableInput()
+	return nil
+}
+
+func WaitForPause() {
+	<-goLogger.pauseChannel
+}
+
+func QueueMessage(text string) error {
+	goLogger.inputChannel <- text
 	return nil
 }
